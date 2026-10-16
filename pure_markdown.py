@@ -22,11 +22,11 @@ except ImportError:
         return _cgi.escape(s, quote=False)
 
 
-SETTINGS_FILE = 'PureSublimeMarkdown.sublime-settings'
-PHANTOM_KEY = 'pure_sublime_markdown_images'
-PREVIEW_PHANTOM_KEY = 'pure_sublime_markdown_preview'
-REGION_RED = 'pure_sublime_markdown_red'
-REGION_GREEN = 'pure_sublime_markdown_green'
+SETTINGS_FILE = 'PureMarkdown.sublime-settings'
+PHANTOM_KEY = 'pure_markdown_images'
+PREVIEW_PHANTOM_KEY = 'pure_markdown_preview'
+REGION_RED = 'pure_markdown_red'
+REGION_GREEN = 'pure_markdown_green'
 
 IMG_RE = re.compile(r'<img\s+[^>]*?src="([^"]+)"[^>]*?>', re.IGNORECASE)
 TAG_RE = re.compile(r'(<img\s+[^>]*?>|<\s*span[^>]*>|<\s*/\s*span\s*>)', re.IGNORECASE)
@@ -186,7 +186,7 @@ def _is_in_preview(view):
         return False
 
 
-GENERATED_SCHEME = 'PureSublimeMarkdownHiddenCaret.generated.sublime-color-scheme'
+GENERATED_SCHEME = 'PureMarkdownHiddenCaret.generated.sublime-color-scheme'
 GENERATED_SCHEME_PATH = 'Packages/User/' + GENERATED_SCHEME
 _last_scheme_colors = (None, None)
 
@@ -511,7 +511,7 @@ def _schedule(view_id):
     sublime.set_timeout(_run, 400)
 
 
-class PureSublimeMarkdownShow(sublime_plugin.EventListener):
+class PureMarkdownShow(sublime_plugin.EventListener):
     def on_load(self, view):
         if _resume_preview_if_needed(view):
             return
@@ -543,17 +543,17 @@ class PureSublimeMarkdownShow(sublime_plugin.EventListener):
         _preview_state.pop(view.id(), None)
 
 
-class PureSublimeMarkdownImagesShowCommand(sublime_plugin.TextCommand):
+class PureMarkdownImagesShowCommand(sublime_plugin.TextCommand):
     def run(self, edit, show_local=True, show_remote=True):
         update_view_phantoms(self.view, show_remote=show_remote)
 
 
-class PureSublimeMarkdownImagesHideCommand(sublime_plugin.TextCommand):
+class PureMarkdownImagesHideCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         clear_view(self.view)
 
 
-class PureSublimeMarkdownImagesToggleCommand(sublime_plugin.TextCommand):
+class PureMarkdownImagesToggleCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         s = _settings()
         s.set('enabled', not s.get('enabled', True))
@@ -564,7 +564,7 @@ class PureSublimeMarkdownImagesToggleCommand(sublime_plugin.TextCommand):
             clear_view(self.view)
 
 
-class PureSublimeMarkdownWheelCommand(sublime_plugin.TextCommand):
+class PureMarkdownWheelCommand(sublime_plugin.TextCommand):
     # plain wheel replacement: pixel scroll in preview, line scroll elsewhere
     def run(self, edit, direction=1, fast=False):
         v = self.view
@@ -601,7 +601,7 @@ class PureSublimeMarkdownWheelCommand(sublime_plugin.TextCommand):
             pass
 
 
-class PureSublimeMarkdownPreviewCommand(sublime_plugin.TextCommand):
+class PureMarkdownPreviewCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         if _is_in_preview(self.view):
             exit_preview(self.view)

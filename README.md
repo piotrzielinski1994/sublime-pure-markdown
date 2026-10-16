@@ -1,4 +1,4 @@
-# Pure Sublime Markdown
+# PureMarkdown
 
 Sublime Text 4 plugin: VS Code-style Markdown preview with inline HTML
 (`<img>`, `<span style="color:...">`) rendered directly in Sublime.
@@ -15,7 +15,7 @@ Sublime Text 4 plugin: VS Code-style Markdown preview with inline HTML
 ## Install
 
 ```bash
-git clone <this-repo> "Packages/PureSublimeMarkdown"
+git clone <this-repo> "Packages/PureMarkdown"
 ```
 
 Or copy the files into `Packages/User`. No dependencies, stdlib only.
@@ -23,8 +23,8 @@ Requires Sublime Text 4 (build 4073+).
 
 ## Commands (Command Palette)
 
-1. `Pure Sublime Markdown: Preview`
-2. `Pure Sublime Markdown: Toggle inline images`
+1. `PureMarkdown: Preview`
+2. `PureMarkdown: Toggle inline images`
 
 ## Key bindings and mouse (opt-in)
 
@@ -33,7 +33,7 @@ from `Example.sublime-keymap` to your
 `Packages/User/Default (<platform>).sublime-keymap`:
 
 ```json
-[{ "keys": ["ctrl+shift+v"], "command": "pure_sublime_markdown_preview" }]
+[{ "keys": ["ctrl+shift+v"], "command": "pure_markdown_preview" }]
 ```
 
 For fast scroll, add to your
@@ -49,7 +49,7 @@ For fast scroll, add to your
 1. `Ctrl+Shift+V` - toggle in-place preview (same as VS Code).
 2. `Alt` + mouse wheel - fast scroll (~10 lines per tick).
 
-## Settings (`PureSublimeMarkdown.sublime-settings`)
+## Settings (`PureMarkdown.sublime-settings`)
 
 1. `enabled` - inline images on/off (default `true`).
 2. `image_height` - thumbnail height in px (default `150`).

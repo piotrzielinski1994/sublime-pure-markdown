@@ -1,3 +1,3 @@
 [
-	{ "keys": ["ctrl+shift+v"], "command": "pure_sublime_markdown_preview" }
+	{ "keys": ["ctrl+shift+v"], "command": "pure_markdown_preview" }
 ]
