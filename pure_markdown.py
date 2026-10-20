@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import sublime
@@ -152,19 +153,95 @@ h3 {{ color: #f0b429; font-size: 1.2em; }}
 h3 a {{ color: #f0b429; }}
 a {{ color: #4da3ff; }}
 div.rule {{ border-top: 1px solid #555555; margin-top: 16px; margin-bottom: 16px; }}
-/* ST measures the phantom box slightly shorter than the painted content
-   (accumulated line-height rounding), which clips the last ~100px of
-   content at the bottom. padding-bottom is a single measured value, so it
-   absorbs the error and keeps the clip inside this empty area. */
-div.mdprev {{ padding-bottom: 200px; }}
+/* minihtml measures phantom content in 96-DPI units but paints it at the
+   window DPI, so the painted content is taller than the measured box. The
+   gap grows with the document, which is why one fixed bottom padding only
+   hid the tail of short documents: past ~a few dozen rows the tail fell
+   below the reachable layout end and was cut off. This padding is measured
+   and set at runtime to the exact drift (see _sync_preview_padding), so the
+   layout end always matches the painted end. */
+div.mdprev {{ padding-bottom: {pad}px; }}
 </style>
 <div class="mdprev">{body}</div>
 """
 
+# view id -> (padding in the current phantom, measured content height)
+_preview_pad = {}
 
-def build_minihtml(md_text, base_dir, fg='#d4d4d4'):
+_dpi_cache = None
+
+
+def _dpi_factor():
+    # window DPI / 96, i.e. how much minihtml paint exceeds its measurement.
+    # The plugin host runs in its own process, so the window is looked up
+    # through the parent pid; GetDpiForSystem reports 96 there and is useless.
+    global _dpi_cache
+    if _dpi_cache is not None:
+        return _dpi_cache
+    factor = 1.0
+    try:
+        if sublime.platform() == 'windows':
+            import ctypes
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            ppid = os.getppid()
+            found = []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def _cb(hwnd, _):
+                pid = wintypes.DWORD()
+                u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == ppid and u.IsWindowVisible(hwnd):
+                    found.append(hwnd)
+                return True
+
+            u.EnumWindows(_cb, 0)
+            fg = u.GetForegroundWindow()
+            hwnd = fg if fg in found else (found[0] if found else 0)
+            dpi = u.GetDpiForWindow(hwnd) if hwnd else 0
+            if dpi and 48 <= dpi <= 480:
+                factor = dpi / 96.0
+    except Exception:
+        factor = 1.0
+    _dpi_cache = factor
+    return factor
+
+
+def _pad_height(content):
+    # drift = painted height - measured height; measured is 96-DPI based while
+    # the paint follows the window DPI, so the gap is proportional to the DPI
+    # excess. 0.35 of the excess covers the observed drift at 125% scaling with
+    # a little margin, and collapses to 0 at 96 DPI where there is no drift.
+    drift = max(0.0, _dpi_factor() - 1.0)
+    return int(math.ceil(content * 0.35 * drift))
+
+
+def build_minihtml(md_text, base_dir, fg='#d4d4d4', pad=0):
     body = convert_markdown(md_text, base_dir, _img_height())
-    return MINIHTML_TEMPLATE.format(body=body, fg=fg)
+    return MINIHTML_TEMPLATE.format(body=body, fg=fg, pad=int(pad))
+
+
+def _sync_preview_padding(view):
+    # measure the phantom that is already in the layout, then rebuild it with
+    # a bottom padding equal to the accumulated paint drift
+    if not _is_in_preview(view):
+        return
+    try:
+        pad, _ = _preview_pad.get(view.id(), (0, 0))
+        total = view.text_to_layout(view.text_point(1, 0))[1]
+    except Exception:
+        return
+    if total <= 0:
+        return
+    content = max(0.0, total - pad)
+    want = _pad_height(content)
+    if abs(want - pad) < 2:
+        return
+    _preview_pad[view.id()] = (want, content)
+    try:
+        _update_preview_phantom(view, _render_preview_html(view))
+    except Exception:
+        traceback.print_exc()
 
 
 def _on_preview_navigate(href):
@@ -247,7 +324,8 @@ def _render_preview_html(view):
     # saved on enter_preview: view settings survive an ST restart, unlike
     # module state, and the view is already on the generated scheme then
     fg = view.settings().get('pure_md_preview_fg') or _preview_colors(view)[1]
-    return build_minihtml(md_text, base, fg)
+    pad = _preview_pad.get(view.id(), (0, 0))[0]
+    return build_minihtml(md_text, base, fg, pad)
 
 
 def _apply_preview_settings(view):
@@ -261,7 +339,7 @@ def _apply_preview_settings(view):
     st.set('markdown_preview_mode', True)
     st.set('color_scheme', GENERATED_SCHEME_PATH)
     st.set('font_size', 2)
-    st.set('scroll_past_end', False)
+    st.set('scroll_past_end', True)
     st.set('gutter', False)
     view.set_read_only(True)
     try:
@@ -282,6 +360,12 @@ def _update_preview_phantom(view, html):
         sublime.Region(0), html, sublime.LAYOUT_BLOCK,
         _on_preview_navigate)])
     _preview_sets[view.id()] = pset
+    # the phantom is laid out asynchronously: measure it once it is in the
+    # layout, then rebuild with the drift padding
+    vid = view.id()
+    sublime.set_timeout(
+        lambda: _sync_preview_padding(view)
+        if view.is_valid() and _preview_sets.get(vid) is pset else None, 80)
 
 
 def enter_preview(view):
@@ -327,6 +411,7 @@ def exit_preview(view):
     except Exception:
         pass
     _preview_sets.pop(view.id(), None)
+    _preview_pad.pop(view.id(), None)
     try:
         for r in view.folded_regions():
             view.unfold(r)
