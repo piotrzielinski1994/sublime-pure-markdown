@@ -10,14 +10,14 @@
 				"id": "package-settings",
 				"children": [
 					{
-					"caption": "PureMarkdown",
+					"caption": "PureMarkdownPreview",
 						"children": [
 							{
 								"caption": "Settings",
 								"command": "edit_settings",
 								"args": {
-								"base_file": "${packages}/PureMarkdown/PureMarkdown.sublime-settings",
-								"user_file": "${packages}/User/PureMarkdown.sublime-settings",
+								"base_file": "${packages}/PureMarkdownPreview/PureMarkdownPreview.sublime-settings",
+								"user_file": "${packages}/User/PureMarkdownPreview.sublime-settings",
 									"default": "{}"
 								}
 							},
@@ -25,7 +25,7 @@
 								"caption": "Example Key Bindings",
 								"command": "edit_settings",
 								"args": {
-									"base_file": "${packages}/PureMarkdown/Example.sublime-keymap",
+									"base_file": "${packages}/PureMarkdownPreview/Example.sublime-keymap",
 									"user_file": "${packages}/User/Default (${platform}).sublime-keymap"
 								}
 							}

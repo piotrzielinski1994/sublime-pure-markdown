@@ -1,0 +1,18 @@
+[
+	{
+		"caption": "PureMarkdownPreview: Preview",
+		"command": "pure_markdown_preview"
+	},
+	{
+		"caption": "PureMarkdownPreview: Toggle inline images",
+		"command": "pure_markdown_images_toggle"
+	},
+	{
+		"caption": "Preferences: PureMarkdownPreview Settings",
+		"command": "edit_settings",
+		"args": {
+			"base_file": "${packages}/PureMarkdownPreview/PureMarkdownPreview.sublime-settings",
+			"default": "{}"
+		}
+	}
+]

@@ -22,7 +22,7 @@ except ImportError:
         return _cgi.escape(s, quote=False)
 
 
-SETTINGS_FILE = 'PureMarkdown.sublime-settings'
+SETTINGS_FILE = 'PureMarkdownPreview.sublime-settings'
 PHANTOM_KEY = 'pure_markdown_images'
 PREVIEW_PHANTOM_KEY = 'pure_markdown_preview'
 REGION_RED = 'pure_markdown_red'
@@ -186,7 +186,7 @@ def _is_in_preview(view):
         return False
 
 
-GENERATED_SCHEME = 'PureMarkdownHiddenCaret.generated.sublime-color-scheme'
+GENERATED_SCHEME = 'PureMarkdownPreviewHiddenCaret.generated.sublime-color-scheme'
 GENERATED_SCHEME_PATH = 'Packages/User/' + GENERATED_SCHEME
 _last_scheme_colors = (None, None)
 
