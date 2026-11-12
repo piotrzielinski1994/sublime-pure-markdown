@@ -59,5 +59,5 @@ For fast scroll, add to your
 
 1. minihtml has no `<hr>` or flexbox: rules render as bordered `div`s,
    images flow inline and wrap.
-2. Preview uses a generated color scheme matching your theme with a
-   hidden caret; the view is read-only.
+2. Preview uses a generated color scheme matching your theme; the view
+   is read-only.

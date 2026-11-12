@@ -200,11 +200,9 @@ def _write_preview_scheme(bg, fg):
         return
     try:
         path = os.path.join(sublime.packages_path(), 'User', GENERATED_SCHEME)
-        caret = bg + '00' if isinstance(bg, str) and bg.startswith('#') and len(bg) == 7 else '#00000000'
         g = []
         g.append('\t\t"background": "' + bg + '",')
         g.append('\t\t"foreground": "' + bg + '",')
-        g.append('\t\t"caret": "' + caret + '",')
         for key in ('invisibles', 'line_highlight', 'selection',
                     'selection_foreground', 'selection_border',
                     'find_highlight', 'find_highlight_foreground',
@@ -212,7 +210,7 @@ def _write_preview_scheme(bg, fg):
                     'guide', 'active_guide', 'stack_guide',
                     'brackets_foreground', 'tags_foreground',
                     'fold_marker', 'misspelling', 'minimap_border',
-                    'accent', 'block_caret', 'caret_edge',
+                    'accent',
                     'inert_gutter_foreground'):
             g.append('\t\t"' + key + '": "' + bg + '",')
         content = ('{\n\t"name": "Markdown Preview (invisible buffer, generated)",\n'
