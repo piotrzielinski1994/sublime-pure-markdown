@@ -1,5 +1,7 @@
+import math
 import os
 import re
+import struct
 import sublime
 import sublime_plugin
 import traceback
@@ -43,6 +45,10 @@ _pending = set()
 # Keep PhantomSet refs alive: a collected set removes its phantoms
 _phantom_sets = {}
 _preview_sets = {}
+# image path -> ((mtime, size), (width, height) or None)
+_img_sizes = {}
+# view id -> viewport width the tail padding was computed for
+_preview_width = {}
 
 
 def _settings():
@@ -117,7 +123,7 @@ def format_mixed(line, base_dir):
     return ''.join(out)
 
 
-def convert_markdown(md_text, base_dir, img_height=150):
+def convert_markdown(md_text, base_dir, img_height=150, width=0):
     html_lines = []
     for raw in md_text.splitlines():
         line = raw.rstrip()
@@ -135,7 +141,8 @@ def convert_markdown(md_text, base_dir, img_height=150):
             continue
         if IMG_RE.search(line):
             # image-only (or image-led) row: keep tags, no <p> wrapper
-            html_lines.append('<div class="imgs">' + format_mixed(line, base_dir) + '</div>')
+            for row in _split_image_line(line, base_dir, img_height, width):
+                html_lines.append('<div class="imgs">' + format_mixed(row, base_dir) + '</div>')
             continue
         html_lines.append('<p>' + format_mixed(line, base_dir) + '</p>')
     return '\n'.join(html_lines)
@@ -152,19 +159,226 @@ h3 {{ color: #f0b429; font-size: 1.2em; }}
 h3 a {{ color: #f0b429; }}
 a {{ color: #4da3ff; }}
 div.rule {{ border-top: 1px solid #555555; margin-top: 16px; margin-bottom: 16px; }}
-/* ST measures the phantom box slightly shorter than the painted content
-   (accumulated line-height rounding), which clips the last ~100px of
-   content at the bottom. padding-bottom is a single measured value, so it
-   absorbs the error and keeps the clip inside this empty area. */
-div.mdprev {{ padding-bottom: 200px; }}
+/* minihtml measures an image row by the height attribute and paints its
+   images at the Windows DPI scale. Rows are split at the painted width (see
+   _split_image_line) so the measurement and the paint wrap alike; this
+   padding only absorbs the rounding the paint adds on top of that, and
+   covers an image too wide for the window (see tail_padding). */
+div.mdprev {{ padding-bottom: {pad}px; }}
 </style>
 <div class="mdprev">{body}</div>
 """
 
+TAIL_PADDING_MIN = 200
+TAIL_PADDING_MARGIN = 24
+# spacing minihtml puts between two images of the same row, and the width
+# assumed for an image whose file cannot be measured
+IMAGE_GAP = 4.0
+IMAGE_WIDTH_GUESS = 1.25
+# share of the window width an image row may use when painted; the rest is
+# slack for the DPI scaling and the gap rounding
+IMAGE_FIT_RATIO = 0.95
 
-def build_minihtml(md_text, base_dir, fg='#d4d4d4'):
-    body = convert_markdown(md_text, base_dir, _img_height())
-    return MINIHTML_TEMPLATE.format(body=body, fg=fg)
+_dpi_scale = None
+
+
+def _paint_scale():
+    # minihtml computes the phantom height in 96-DPI units but paints at the
+    # system DPI scale, so the painted content is taller than the measured
+    # box by (scale - 1) x its height. The scale comes from the Windows DPI
+    # setting; everywhere else the measured and painted box agree.
+    global _dpi_scale
+    if _dpi_scale is not None:
+        return _dpi_scale
+    scale = 1.0
+    try:
+        if sublime.platform() == 'windows':
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, r'Control Panel\Desktop\WindowMetrics')
+            try:
+                dpi = int(winreg.QueryValueEx(key, 'AppliedDPI')[0])
+            finally:
+                key.Close()
+            if 72 <= dpi <= 480:
+                scale = dpi / 96.0
+    except Exception:
+        scale = 1.0
+    _dpi_scale = scale
+    return scale
+
+
+def _jpeg_size(fp):
+    fp.seek(2)
+    while True:
+        b = fp.read(1)
+        while b and b != b'\xff':
+            b = fp.read(1)
+        while b == b'\xff':
+            b = fp.read(1)
+        if not b:
+            return None
+        marker = b[0]
+        if marker in (0xd8, 0xd9) or 0xd0 <= marker <= 0xd7:
+            continue
+        seg = fp.read(2)
+        if len(seg) < 2:
+            return None
+        seg = struct.unpack('>H', seg)[0]
+        if 0xc0 <= marker <= 0xcf and marker not in (0xc4, 0xc8, 0xcc):
+            data = fp.read(5)
+            if len(data) < 5:
+                return None
+            h, w = struct.unpack('>HH', data[1:5])
+            return (w, h)
+        fp.seek(seg - 2, 1)
+
+
+def _img_size(path):
+    # intrinsic pixel size of a local image. minihtml sizes an <img> that
+    # only carries a height by the aspect ratio, so the wrap simulation
+    # below needs the real one
+    try:
+        st = os.stat(path)
+    except Exception:
+        return None
+    key = (st.st_mtime, st.st_size)
+    hit = _img_sizes.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    size = None
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(32)
+            if head[:8] == b'\x89PNG\r\n\x1a\n':
+                size = struct.unpack('>II', head[16:24])
+            elif head[:6] in (b'GIF87a', b'GIF89a'):
+                size = struct.unpack('<HH', head[6:10])
+            elif head[:2] == b'BM':
+                w, h = struct.unpack('<ii', head[18:26])
+                size = (w, abs(h))
+            elif head[:4] == b'RIFF' and head[8:12] == b'WEBP' \
+                    and head[12:16] == b'VP8X':
+                size = (1 + int.from_bytes(head[24:27], 'little'),
+                        1 + int.from_bytes(head[27:30], 'little'))
+            elif head[:2] == b'\xff\xd8':
+                size = _jpeg_size(f)
+    except Exception:
+        size = None
+    if not size or size[0] <= 0 or size[1] <= 0:
+        size = None
+    _img_sizes[path] = (key, size)
+    return size
+
+
+def _local_img_path(src, base_dir):
+    s = (src or '').strip()
+    low = s.lower()
+    if not s or low.startswith(('http://', 'https://', 'data:', 'res://', 'subl:')):
+        return None
+    if low.startswith('file://'):
+        s = s[7:]
+        if re.match(r'^/[A-Za-z]:', s):
+            s = s[1:]
+    if not os.path.isabs(s):
+        if not base_dir:
+            return None
+        s = os.path.join(base_dir, s)
+    return os.path.normpath(s)
+
+
+def _image_widths(line, base_dir, img_height):
+    # width minihtml gives each image of one markdown line, in layout pixels
+    widths = []
+    for tag in re.findall(r'<img\s+[^>]*?>', line, re.IGNORECASE):
+        mh = re.search(r'height="(\d+)"', tag, re.IGNORECASE)
+        height = int(mh.group(1)) if mh else img_height
+        ms = re.search(r'src="([^"]+)"', tag, re.IGNORECASE)
+        size = None
+        path = _local_img_path(ms.group(1), base_dir) if ms else None
+        if path:
+            size = _img_size(path)
+        if size:
+            widths.append(height * size[0] / float(size[1]))
+        else:
+            # unknown size: assume a wide image so an extra wrapped line is
+            # padded rather than clipped
+            widths.append(height * IMAGE_WIDTH_GUESS)
+    return widths
+
+
+def _image_painted_width(tag, base_dir, img_height):
+    # width minihtml paints an image at. A tag without a width attribute is
+    # laid out at the intrinsic pixel width of the file (the height
+    # attribute only sets the height), and painted at the Windows DPI scale
+    mw = re.search(r'width="(\d+)"', tag, re.IGNORECASE)
+    size = None
+    ms = re.search(r'src="([^"]+)"', tag, re.IGNORECASE)
+    path = _local_img_path(ms.group(1), base_dir) if ms else None
+    if path:
+        size = _img_size(path)
+    mh = re.search(r'height="(\d+)"', tag, re.IGNORECASE)
+    height = int(mh.group(1)) if mh else img_height
+    if mw:
+        width = int(mw.group(1))
+    elif size:
+        width = float(size[0])
+    else:
+        # unknown size: assume a wide image, so the row is split earlier
+        width = height * IMAGE_WIDTH_GUESS
+    return width * max(1.0, _paint_scale())
+
+
+def _split_image_line(line, base_dir, img_height, width):
+    # minihtml measures a row by the height attribute but paints the images
+    # at the DPI scale, so a row that fits the measured width wraps again
+    # when painted: that extra painted line is outside the measured box and
+    # pushes the end of the document out of reach. Splitting the row at the
+    # painted width makes the measurement and the paint wrap alike.
+    tags = re.findall(r'<img\s+[^>]*?>', line, re.IGNORECASE)
+    if len(tags) < 2 or width <= 0:
+        return [line]
+    if re.sub(r'<img\s+[^>]*?>', '', line, flags=re.IGNORECASE).strip():
+        return [line]
+    avail = width * IMAGE_FIT_RATIO
+    rows, cur, used = [], [], 0.0
+    for tag in tags:
+        w = _image_painted_width(tag, base_dir, img_height)
+        if cur and used + w + IMAGE_GAP > avail:
+            rows.append(cur)
+            cur, used = [tag], w
+        else:
+            used += w + IMAGE_GAP if cur else w
+            cur.append(tag)
+    if cur:
+        rows.append(cur)
+    return [' '.join(row) for row in rows]
+
+
+def tail_padding(md_text, base_dir, width):
+    # rows are split at the painted width, so the paint no longer adds lines
+    # the measurement does not have. Only a single image wider than the
+    # window still overflows; pad that, and keep a small margin as the tail.
+    img_h = _img_height()
+    scale = max(1.0, _paint_scale())
+    avail = width * IMAGE_FIT_RATIO if width > 0 else 0.0
+    over = 0
+    for raw in md_text.splitlines():
+        if not raw.strip() or not IMG_RE.search(raw):
+            continue
+        tags = re.findall(r'<img\s+[^>]*?>', raw, re.IGNORECASE)
+        for tag in tags:
+            w = _image_painted_width(tag, base_dir, img_h)
+            if avail <= 0 or w > avail:
+                over += img_h
+    return int(max(TAIL_PADDING_MIN,
+                   math.ceil(over * (scale - 1.0)) + TAIL_PADDING_MARGIN))
+
+
+def build_minihtml(md_text, base_dir, fg='#d4d4d4', width=0):
+    body = convert_markdown(md_text, base_dir, _img_height(), width)
+    return MINIHTML_TEMPLATE.format(body=body, fg=fg,
+                                    pad=tail_padding(md_text, base_dir, width))
 
 
 def _on_preview_navigate(href):
@@ -245,7 +459,12 @@ def _render_preview_html(view):
     # saved on enter_preview: view settings survive an ST restart, unlike
     # module state, and the view is already on the generated scheme then
     fg = view.settings().get('pure_md_preview_fg') or _preview_colors(view)[1]
-    return build_minihtml(md_text, base, fg)
+    try:
+        width = int(view.viewport_extent()[0])
+    except Exception:
+        width = 0
+    _preview_width[view.id()] = width
+    return build_minihtml(md_text, base, fg, width)
 
 
 def _apply_preview_settings(view):
@@ -325,6 +544,7 @@ def exit_preview(view):
     except Exception:
         pass
     _preview_sets.pop(view.id(), None)
+    _preview_width.pop(view.id(), None)
     try:
         for r in view.folded_regions():
             view.unfold(r)
@@ -351,6 +571,38 @@ def exit_preview(view):
     if is_markdown_view(view):
         update_view_phantoms(view)
     sublime.status_message('Markdown preview off')
+
+
+def _refit_preview_width(view):
+    # a window resize re-wraps the painted image rows without any ST event
+    # firing, which invalidates the padding; re-render once, holding the
+    # scroll position so the view does not jump to the top
+    vid = view.id()
+    try:
+        width = int(view.viewport_extent()[0])
+    except Exception:
+        return
+    if width <= 0:
+        return
+    old = _preview_width.get(vid)
+    if old is None or abs(width - old) < 20:
+        return
+    try:
+        pos = view.viewport_position()
+        _update_preview_phantom(view, _render_preview_html(view))
+    except Exception:
+        traceback.print_exc()
+        return
+    sublime.set_timeout(lambda: _hold_viewport(view, pos), 100)
+
+
+def _hold_viewport(view, pos):
+    try:
+        if view.is_valid() and _is_in_preview(view):
+            end = max(0.0, view.layout_extent()[1] - view.viewport_extent()[1])
+            view.set_viewport_position((pos[0], min(pos[1], end)), False)
+    except Exception:
+        traceback.print_exc()
 
 
 def refresh_inplace_preview(view):
@@ -572,6 +824,7 @@ class PureMarkdownWheelCommand(sublime_plugin.TextCommand):
             direction = 1.0
         in_preview = _is_in_preview(v)
         if in_preview:
+            _refit_preview_width(v)
             step = 200.0 if fast else 350.0
         else:
             try:
