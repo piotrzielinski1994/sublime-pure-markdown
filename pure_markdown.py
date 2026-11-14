@@ -307,10 +307,11 @@ def _image_widths(line, base_dir, img_height):
     return widths
 
 
-def _image_painted_width(tag, base_dir, img_height):
-    # width minihtml paints an image at. A tag without a width attribute is
-    # laid out at the intrinsic pixel width of the file (the height
-    # attribute only sets the height), and painted at the Windows DPI scale
+def _image_layout_width(tag, base_dir, img_height):
+    # width minihtml gives an image in layout units. A tag without a width
+    # attribute is laid out at the intrinsic pixel width of the file (the
+    # height attribute only sets the height). The DPI scale applies to the
+    # whole phantom, viewport width included, so it cancels out here
     mw = re.search(r'width="(\d+)"', tag, re.IGNORECASE)
     size = None
     ms = re.search(r'src="([^"]+)"', tag, re.IGNORECASE)
@@ -326,15 +327,13 @@ def _image_painted_width(tag, base_dir, img_height):
     else:
         # unknown size: assume a wide image, so the row is split earlier
         width = height * IMAGE_WIDTH_GUESS
-    return width * max(1.0, _paint_scale())
+    return width
 
 
 def _split_image_line(line, base_dir, img_height, width):
-    # minihtml measures a row by the height attribute but paints the images
-    # at the DPI scale, so a row that fits the measured width wraps again
-    # when painted: that extra painted line is outside the measured box and
-    # pushes the end of the document out of reach. Splitting the row at the
-    # painted width makes the measurement and the paint wrap alike.
+    # minihtml wraps an image row by the layout widths, which disagree with
+    # the painted row: splitting the row here at the same widths fixes where
+    # the row breaks in the source, so the painted result stays predictable.
     tags = re.findall(r'<img\s+[^>]*?>', line, re.IGNORECASE)
     if len(tags) < 2 or width <= 0:
         return [line]
@@ -343,7 +342,7 @@ def _split_image_line(line, base_dir, img_height, width):
     avail = width * IMAGE_FIT_RATIO
     rows, cur, used = [], [], 0.0
     for tag in tags:
-        w = _image_painted_width(tag, base_dir, img_height)
+        w = _image_layout_width(tag, base_dir, img_height)
         if cur and used + w + IMAGE_GAP > avail:
             rows.append(cur)
             cur, used = [tag], w
@@ -356,7 +355,7 @@ def _split_image_line(line, base_dir, img_height, width):
 
 
 def tail_padding(md_text, base_dir, width):
-    # rows are split at the painted width, so the paint no longer adds lines
+    # rows are split at the layout width, so the paint no longer adds lines
     # the measurement does not have. Only a single image wider than the
     # window still overflows; pad that, and keep a small margin as the tail.
     img_h = _img_height()
@@ -368,7 +367,7 @@ def tail_padding(md_text, base_dir, width):
             continue
         tags = re.findall(r'<img\s+[^>]*?>', raw, re.IGNORECASE)
         for tag in tags:
-            w = _image_painted_width(tag, base_dir, img_h)
+            w = _image_layout_width(tag, base_dir, img_h)
             if avail <= 0 or w > avail:
                 over += img_h
     return int(max(TAIL_PADDING_MIN,
